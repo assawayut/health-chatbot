@@ -20,6 +20,8 @@ from linebot.v3.exceptions import InvalidSignatureError
 
 from config import get_settings
 from handlers.message_handler import get_message_handler
+from services.scheduler_service import get_scheduler_service
+from services.broadcast_service import get_broadcast_service
 
 # Setup logging
 logging.basicConfig(
@@ -54,8 +56,17 @@ async def lifespan(app: FastAPI):
     """Application lifespan manager"""
     logger.info("Starting Health Assessment Chatbot...")
     _ensure_line_initialized()
+
+    # Start scheduler for periodic broadcasts
+    scheduler = get_scheduler_service()
+    scheduler.start()
+    # Schedule PM2.5 broadcast at 7:00 AM and 6:00 PM Bangkok time
+    scheduler.add_multiple_broadcast_times([(7, 0), (18, 0)])
+
     yield
+
     logger.info("Shutting down...")
+    scheduler.stop()
     if _api_client:
         await _api_client.close()
 
@@ -72,6 +83,15 @@ app = FastAPI(
 async def root():
     """Health check endpoint"""
     return {"status": "ok", "message": "Health Assessment Chatbot is running"}
+
+
+@app.post("/broadcast")
+async def manual_broadcast():
+    """Manually trigger PM2.5 broadcast (for testing)"""
+    logger.info("Manual broadcast triggered")
+    service = get_broadcast_service()
+    success = await service.broadcast_pm25_report()
+    return {"status": "ok" if success else "failed", "message": "Broadcast sent" if success else "Broadcast failed"}
 
 
 @app.post("/webhook")
