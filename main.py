@@ -61,7 +61,7 @@ async def lifespan(app: FastAPI):
     scheduler = get_scheduler_service()
     scheduler.start()
     # Schedule PM2.5 broadcast (Bangkok time)
-    scheduler.add_multiple_broadcast_times([(15, 46)])
+    scheduler.add_multiple_broadcast_times([(11, 0)])
 
     yield
 
