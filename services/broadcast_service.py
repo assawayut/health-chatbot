@@ -36,36 +36,37 @@ class BroadcastService:
                 # Wait for images to load
                 await page.wait_for_selector("img.CENy8b", timeout=10000)
 
-                # Find all images with class CENy8b
+                # Try to find image in specific section first (PM2.5 report section)
+                section = await page.query_selector("section#h\\.7f0feb644f138bc2_0")
+                if section:
+                    img = await section.query_selector("img.CENy8b")
+                    if img:
+                        src = await img.get_attribute("src")
+                        if src and "lh3.googleusercontent.com" in src:
+                            logger.info(f"Found PM2.5 image in target section: {src[:80]}...")
+                            await browser.close()
+                            return src
+
+                # Fallback: find first portrait image
                 images = await page.query_selector_all("img.CENy8b")
-
-                best_image = None
-                best_height = 0
-
                 for img in images:
                     src = await img.get_attribute("src")
                     if not src or "lh3.googleusercontent.com/sitesv" not in src:
                         continue
 
-                    # Get image bounding box to check size
                     box = await img.bounding_box()
                     if box:
                         height = box.get("height", 0)
                         width = box.get("width", 0)
                         logger.info(f"Found image: {width:.0f}x{height:.0f} - {src[:60]}...")
 
-                        # Look for portrait image (height > width) with good size
-                        # The PM2.5 report is ~342x466 (portrait)
-                        if height > width and height > best_height and height > 300:
-                            best_height = height
-                            best_image = src
+                        # First portrait image with reasonable size
+                        if height > width and height > 300:
+                            logger.info(f"Selected first portrait image: {src[:80]}...")
+                            await browser.close()
+                            return src
 
                 await browser.close()
-
-                if best_image:
-                    logger.info(f"Selected PM2.5 image: {best_image[:80]}...")
-                    return best_image
-
                 logger.warning("No suitable PM2.5 image found on page")
                 return None
 
