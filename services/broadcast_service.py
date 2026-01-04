@@ -2,9 +2,8 @@
 
 import httpx
 import logging
-import re
+import asyncio
 from typing import Optional, List
-from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
@@ -24,35 +23,44 @@ class BroadcastService:
         }
 
     async def get_pm25_image_url(self) -> Optional[str]:
-        """Scrape PM2.5 image URL from Google Sites"""
+        """Get PM2.5 image URL from Google Sites using Playwright (headless browser)"""
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                response = await client.get(PM25_IMAGE_PAGE)
-                if response.status_code != 200:
-                    logger.error(f"Failed to fetch Google Sites page: {response.status_code}")
-                    return None
+            from playwright.async_api import async_playwright
 
-                soup = BeautifulSoup(response.text, 'html.parser')
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                page = await browser.new_page()
 
-                # Find image with class containing CENy8b (Google Sites image class)
-                img = soup.find('img', class_=re.compile(r'CENy8b'))
-                if img and img.get('src'):
-                    image_url = img['src']
-                    logger.info(f"Found PM2.5 image: {image_url[:50]}...")
-                    return image_url
+                await page.goto(PM25_IMAGE_PAGE, wait_until="networkidle")
 
-                # Alternative: find any lh3.googleusercontent.com image
-                for img in soup.find_all('img'):
-                    src = img.get('src', '')
-                    if 'lh3.googleusercontent.com' in src:
-                        logger.info(f"Found PM2.5 image (alt): {src[:50]}...")
+                # Wait for image to load
+                await page.wait_for_selector("img.CENy8b", timeout=10000)
+
+                # Find the PM2.5 report image (class CENy8b and from googleusercontent)
+                images = await page.query_selector_all("img.CENy8b")
+
+                for img in images:
+                    src = await img.get_attribute("src")
+                    if src and "lh3.googleusercontent.com" in src and "sitesv" in src:
+                        logger.info(f"Found PM2.5 image: {src[:80]}...")
+                        await browser.close()
                         return src
 
+                # Fallback: get any googleusercontent image
+                all_images = await page.query_selector_all("img")
+                for img in all_images:
+                    src = await img.get_attribute("src")
+                    if src and "lh3.googleusercontent.com/sitesv" in src:
+                        logger.info(f"Found PM2.5 image (fallback): {src[:80]}...")
+                        await browser.close()
+                        return src
+
+                await browser.close()
                 logger.warning("No PM2.5 image found on page")
                 return None
 
         except Exception as e:
-            logger.error(f"Error scraping PM2.5 image: {e}")
+            logger.error(f"Error getting PM2.5 image: {e}")
             return None
 
     async def broadcast_image(self, image_url: str, alt_text: str = "รายงานค่าฝุ่น PM2.5") -> bool:
@@ -117,26 +125,15 @@ class BroadcastService:
             return False
 
     async def broadcast_pm25_report(self) -> bool:
-        """Fetch PM2.5 image and broadcast to all followers"""
+        """Fetch PM2.5 image and broadcast to all followers (image only)"""
         image_url = await self.get_pm25_image_url()
 
         if not image_url:
             logger.error("Could not get PM2.5 image URL")
             return False
 
-        # Send image
-        success = await self.broadcast_image(image_url)
-
-        if success:
-            # Optionally send text with the image
-            await self.broadcast_text(
-                "📊 รายงานสถานการณ์ฝุ่น PM2.5 ประจำวัน\n\n"
-                "ติดตามข้อมูลเพิ่มเติมได้ที่:\n"
-                "🌐 https://air4thai.pcd.go.th\n\n"
-                "พิมพ์ 'ตรวจสอบค่าฝุ่น' เพื่อดูค่าฝุ่นบริเวณใกล้คุณค่ะ"
-            )
-
-        return success
+        # Send image only
+        return await self.broadcast_image(image_url)
 
 
 # Singleton instance
